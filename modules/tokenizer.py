@@ -55,6 +55,7 @@ class GraphFeatureTokenizer(nn.Module):
         self.lap_node_id = lap_node_id
         self.lap_node_id_k = lap_node_id_k
         self.lap_node_id_sign_flip = lap_node_id_sign_flip
+        self.use_node_features = True
 
         self.type_id = type_id
 
@@ -227,11 +228,14 @@ class GraphFeatureTokenizer(nn.Module):
             batched_data.edge_data,
             batched_data.edge_num
         )
-
-        node_feature = self.node_encoder(node_data).sum(-2)  # [sum(n_node), D]
-        edge_feature = self.edge_encoder(edge_data).sum(-2)  # [sum(n_edge), D]
         z_feature = self.z_encoder(z_data).sum(-2) # [sum(n_node), D]
-        node_feature += z_feature
+        if self.use_node_features:
+            node_feature = self.node_encoder(node_data).sum(-2)  # [sum(n_node), D]
+            node_feature += z_feature
+        else:
+            node_feature = z_feature
+        edge_feature = self.edge_encoder(edge_data).sum(-2)  # [sum(n_edge), D]
+        
 
         device = node_feature.device
         dtype = node_feature.dtype

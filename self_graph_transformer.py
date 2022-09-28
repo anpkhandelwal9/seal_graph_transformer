@@ -13,7 +13,9 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch.nn import BCEWithLogitsLoss
 
-from modules import init_graphormer_params, TokenGTGraphEncoder
+#from lr import PolynomialDecayLR
+
+from seal_graph_transformer.modules import init_graphormer_params, TokenGTGraphEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -36,21 +38,21 @@ class TokenGTModel(nn.Module):
 
     def forward(self, batched_data, **kwargs):
         out, attn  = self.encoder(batched_data, **kwargs)
-        return F.softmax(self.linear(out), dim=1)
+        return self.linear(out)
 
 
 class TokenGTEncoder(nn.Module):
     def __init__(self, 
         num_node_features = 1,
-        num_edge_features = 1,
+        num_edge_features = 2,
         num_classes = 2, 
         share_encoder_input_output_embed = False,
-        encoder_embed_dim = 768,
-        prenorm=False,
-        postnorm=True,
+        encoder_embed_dim = 1024,
+        prenorm=True,
+        postnorm=False,
         max_nodes = 128,
-        encoder_layers = 16,
-        encoder_attention_heads = 32,
+        encoder_layers = 6,
+        encoder_attention_heads = 8,
         return_attention = True):
         super().__init__()
         assert not (prenorm and postnorm)
@@ -156,7 +158,15 @@ if __name__ == '__main__':
     #     list_data += dataset
     loader = DataLoader(dataset, batch_size=2) 
     
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=2e-4)
+    # lr_scheduler = PolynomialDecayLR(
+    #         optimizer,
+    #         warmup_updates=args.warmup_updates,
+    #         tot_updates=args.tot_updates,
+    #         lr=args.peak_lr,
+    #         end_lr=args.end_lr,
+    #         power=1.0)
+
     pbar = tqdm(loader, ncols=70)
     for data in pbar:
         optimizer.zero_grad()
