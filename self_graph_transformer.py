@@ -44,7 +44,7 @@ class TokenGTModel(nn.Module):
 class TokenGTEncoder(nn.Module):
     def __init__(self, 
         num_node_features = 1,
-        num_edge_features = 2,
+        num_edge_features = 1,
         num_classes = 2, 
         share_encoder_input_output_embed = False,
         encoder_embed_dim = 1024,
@@ -140,7 +140,7 @@ class TokenGTEncoder(nn.Module):
 
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = TokenGTModel(embedding_dim=768, num_classes = 2, return_attention=True)
+    model = TokenGTModel(embedding_dim=768, num_classes = 2, type_id=True, return_attention=True)
     model.to(device)
     batched_data = {}
     # batched_data["node_data"] =  torch.tensor([[101], [102],[201], [202], [203]], dtype=torch.float)

@@ -50,7 +50,7 @@ class TokenGTGraphEncoder(nn.Module):
             lap_node_id_k: int = 8,
             lap_node_id_sign_flip: bool = False,
             lap_node_id_eig_dropout: float = 0.0,
-            type_id: bool = False,
+            type_id: bool = True,
 
             stochastic_depth: bool = False,
 
@@ -62,7 +62,7 @@ class TokenGTGraphEncoder(nn.Module):
             performer_auto_check_redraw: bool = True,
 
             num_encoder_layers: int = 12,
-            embedding_dim: int = 768,
+            embedding_dim: int = 768,   #768 for Citeseer
             ffn_embedding_dim: int = 768,
             num_attention_heads: int = 32,
             dropout: float = 0.1,

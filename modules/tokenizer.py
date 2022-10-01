@@ -42,9 +42,15 @@ class GraphFeatureTokenizer(nn.Module):
 
         self.encoder_embed_dim = hidden_dim
 
+        #self.node_encoder = nn.Embedding(num_node_features, hidden_dim, padding_idx=0)
         self.node_encoder = nn.Linear(num_node_features, hidden_dim)
-        self.edge_encoder = nn.Linear(num_edge_features, hidden_dim)
-        self.z_encoder = nn.Embedding(max_z, hidden_dim, padding_idx=0)
+
+        if num_edge_features > 1 :
+            self.edge_encoder = nn.Linear(num_edge_features, hidden_dim)
+        else :
+            self.edge_encoder = nn.Embedding(100, hidden_dim, padding_idx=99)
+
+        self.z_encoder = nn.Embedding(max_z, hidden_dim, padding_idx=max_z-1)
         self.graph_token = nn.Embedding(1, hidden_dim)
         self.null_token = nn.Embedding(1, hidden_dim)  # this is optional
 
@@ -228,13 +234,13 @@ class GraphFeatureTokenizer(nn.Module):
             batched_data.edge_data,
             batched_data.edge_num
         )
-        z_feature = self.z_encoder(z_data).sum(-2) # [sum(n_node), D]
+        z_feature = self.z_encoder(z_data) # [sum(n_node), D]
         if self.use_node_features:
-            node_feature = self.node_encoder(node_data).sum(-2)  # [sum(n_node), D]
-            node_feature += z_feature
+            node_feature = self.node_encoder(node_data)  # [sum(n_node), D]
+            #node_feature += z_feature
         else:
             node_feature = z_feature
-        edge_feature = self.edge_encoder(edge_data).sum(-2)  # [sum(n_edge), D]
+        edge_feature = self.edge_encoder(edge_data)  # [sum(n_edge), D]
         
 
         device = node_feature.device
