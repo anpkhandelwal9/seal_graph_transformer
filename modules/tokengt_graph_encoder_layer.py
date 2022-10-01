@@ -10,7 +10,7 @@ import torch.nn as nn
 from .multihead_attention import MultiheadAttention
 from .multihead_performer_attention import MultiheadPerformerAttention
 from .feedforward import FeedForward
-from .droppath import DropPath
+from .droppath import DropPath 
 
 
 class TokenGTGraphEncoderLayer(nn.Module):

@@ -9,11 +9,11 @@ from .orf import gaussian_orthogonal_random_matrix_batched
 
 def init_params(module, n_layers):
     if isinstance(module, nn.Linear):
-        module.weight.data.normal_(mean=0.0, std=0.02 / math.sqrt(n_layers))
+        module.weight.data.normal_(mean=0.0, std=0.05 / math.sqrt(n_layers))
         if module.bias is not None:
             module.bias.data.zero_()
     if isinstance(module, nn.Embedding):
-        module.weight.data.normal_(mean=0.0, std=0.02)
+        module.weight.data.normal_(mean=0.0, std=0.05)
 
 
 class GraphFeatureTokenizer(nn.Module):
@@ -36,15 +36,18 @@ class GraphFeatureTokenizer(nn.Module):
             type_id,
             hidden_dim,
             n_layers,
-            max_z = 1000  # max value of drnl
+            max_z=1000  # max value of drnl
     ):
         super(GraphFeatureTokenizer, self).__init__()
 
         self.encoder_embed_dim = hidden_dim
 
         self.node_encoder = nn.Linear(num_node_features, hidden_dim)
-        self.edge_encoder = nn.Linear(num_edge_features, hidden_dim)
+        self.act = nn.ReLU(inplace=True)
+        self.edge_encoder = nn.Embedding(max_z, hidden_dim, padding_idx=0)
+        self.in_degree_encoder = nn.Embedding(max_z, hidden_dim, padding_idx=0)
         self.z_encoder = nn.Embedding(max_z, hidden_dim, padding_idx=0)
+        self.node_dist_encoder = nn.Embedding(max_z, hidden_dim, padding_idx=0)
         self.graph_token = nn.Embedding(1, hidden_dim)
         self.null_token = nn.Embedding(1, hidden_dim)  # this is optional
 
@@ -55,18 +58,23 @@ class GraphFeatureTokenizer(nn.Module):
         self.lap_node_id = lap_node_id
         self.lap_node_id_k = lap_node_id_k
         self.lap_node_id_sign_flip = lap_node_id_sign_flip
+        self.use_node_features = True
 
         self.type_id = type_id
 
         if self.rand_node_id:
-            self.rand_encoder = nn.Linear(2 * rand_node_id_dim, hidden_dim, bias=False)
+            self.rand_encoder = nn.Linear(
+                2 * rand_node_id_dim, hidden_dim, bias=False)
 
         if self.lap_node_id:
-            self.lap_encoder = nn.Linear(2 * lap_node_id_k, hidden_dim, bias=False)
-            self.lap_eig_dropout = nn.Dropout2d(p=lap_node_id_eig_dropout) if lap_node_id_eig_dropout > 0 else None
+            self.lap_encoder = nn.Linear(
+                2 * lap_node_id_k, hidden_dim, bias=False)
+            self.lap_eig_dropout = nn.Dropout2d(
+                p=lap_node_id_eig_dropout) if lap_node_id_eig_dropout > 0 else None
 
         if self.orf_node_id:
-            self.orf_encoder = nn.Linear(2 * orf_node_id_dim, hidden_dim, bias=False)
+            self.orf_encoder = nn.Linear(
+                2 * orf_node_id_dim, hidden_dim, bias=False)
 
         if self.type_id:
             self.order_encoder = nn.Embedding(2, hidden_dim)
@@ -91,14 +99,20 @@ class GraphFeatureTokenizer(nn.Module):
         max_n = max(node_num)
         device = edge_index.device
 
-        token_pos = torch.arange(max_len, device=device)[None, :].expand(b, max_len)  # [B, T]
+        token_pos = torch.arange(max_len, device=device)[
+            None, :].expand(b, max_len)  # [B, T]
 
-        seq_len = torch.tensor(seq_len, device=device, dtype=torch.long)[:, None]  # [B, 1]
-        node_num = torch.tensor(node_num, device=device, dtype=torch.long)[:, None]  # [B, 1]
-        edge_num = torch.tensor(edge_num, device=device, dtype=torch.long)[:, None]  # [B, 1]
+        seq_len = torch.tensor(seq_len, device=device, dtype=torch.long)[
+            :, None]  # [B, 1]
+        node_num = torch.tensor(node_num, device=device, dtype=torch.long)[
+            :, None]  # [B, 1]
+        edge_num = torch.tensor(edge_num, device=device, dtype=torch.long)[
+            :, None]  # [B, 1]
 
-        node_index = torch.arange(max_n, device=device, dtype=torch.long)[None, :].expand(b, max_n)  # [B, max_n]
-        node_index = node_index[None, node_index < node_num].repeat(2, 1)  # [2, sum(node_num)]
+        node_index = torch.arange(max_n, device=device, dtype=torch.long)[
+            None, :].expand(b, max_n)  # [B, max_n]
+        node_index = node_index[None, node_index <
+                                node_num].repeat(2, 1)  # [2, sum(node_num)]
 
         padded_node_mask = torch.less(token_pos, node_num)
         padded_edge_mask = torch.logical_and(
@@ -106,15 +120,19 @@ class GraphFeatureTokenizer(nn.Module):
             torch.less(token_pos, node_num + edge_num)
         )
 
-        padded_index = torch.zeros(b, max_len, 2, device=device, dtype=torch.long)  # [B, T, 2]
+        padded_index = torch.zeros(
+            b, max_len, 2, device=device, dtype=torch.long)  # [B, T, 2]
         padded_index[padded_node_mask, :] = node_index.t()
         padded_index[padded_edge_mask, :] = edge_index.t()
 
         if perturb is not None:
             perturb_mask = padded_node_mask[:, :max_n]  # [B, max_n]
-            node_feature = node_feature + perturb[perturb_mask].type(node_feature.dtype)  # [sum(node_num), D]
+            node_feature = node_feature + \
+                perturb[perturb_mask].type(
+                    node_feature.dtype)  # [sum(node_num), D]
 
-        padded_feature = torch.zeros(b, max_len, d, device=device, dtype=node_feature.dtype)  # [B, T, D]
+        padded_feature = torch.zeros(
+            b, max_len, d, device=device, dtype=node_feature.dtype)  # [B, T, D]
         padded_feature[padded_node_mask, :] = node_feature
         padded_feature[padded_edge_mask, :] = edge_feature
 
@@ -126,8 +144,10 @@ class GraphFeatureTokenizer(nn.Module):
     def get_node_mask(node_num, device):
         b = len(node_num)
         max_n = max(node_num)
-        node_index = torch.arange(max_n, device=device, dtype=torch.long)[None, :].expand(b, max_n)  # [B, max_n]
-        node_num = torch.tensor(node_num, device=device, dtype=torch.long)[:, None]  # [B, 1]
+        node_index = torch.arange(max_n, device=device, dtype=torch.long)[
+            None, :].expand(b, max_n)  # [B, max_n]
+        node_num = torch.tensor(node_num, device=device, dtype=torch.long)[
+            :, None]  # [B, 1]
         node_mask = torch.less(node_index, node_num)  # [B, max_n]
         return node_mask
 
@@ -156,8 +176,10 @@ class GraphFeatureTokenizer(nn.Module):
     @torch.no_grad()
     def get_orf_batched(node_mask, dim, device, dtype):
         b, max_n = node_mask.size(0), node_mask.size(1)
-        orf = gaussian_orthogonal_random_matrix_batched(b, dim, dim, device=device, dtype=dtype)  # [B, D, D]
-        orf = orf[:, None, ...].expand(b, max_n, dim, dim)  # [B, max(n_node), D, D]
+        orf = gaussian_orthogonal_random_matrix_batched(
+            b, dim, dim, device=device, dtype=dtype)  # [B, D, D]
+        orf = orf[:, None, ...].expand(
+            b, max_n, dim, dim)  # [B, max(n_node), D, D]
         orf = orf[node_mask]  # [sum(n_node), D, D]
         return orf
 
@@ -173,7 +195,8 @@ class GraphFeatureTokenizer(nn.Module):
         max_len = padded_index.size(1)
         d = node_id.size(-1)
 
-        padded_node_id = torch.zeros(b, max_n, d, device=node_id.device, dtype=node_id.dtype)  # [B, max_n, D]
+        padded_node_id = torch.zeros(
+            b, max_n, d, device=node_id.device, dtype=node_id.dtype)  # [B, max_n, D]
         padded_node_id[node_mask] = node_id
 
         padded_node_id = padded_node_id[:, :, None, :].expand(b, max_n, 2, d)
@@ -187,7 +210,8 @@ class GraphFeatureTokenizer(nn.Module):
         :param padded_index: LongTensor([B, T, 2])
         :return: Tensor([B, T, D])
         """
-        order = torch.eq(padded_index[..., 0], padded_index[..., 1]).long()  # [B, T]
+        order = torch.eq(padded_index[..., 0],
+                         padded_index[..., 1]).long()  # [B, T]
         order_embed = self.order_encoder(order)
         return order_embed
 
@@ -201,12 +225,17 @@ class GraphFeatureTokenizer(nn.Module):
 
         num_special_tokens = 2
         graph_token_feature = self.graph_token.weight.expand(b, 1, d)  # [1, D]
-        null_token_feature = self.null_token.weight.expand(b, 1, d)  # [1, D], this is optional
-        special_token_feature = torch.cat((graph_token_feature, null_token_feature), dim=1)  # [B, 2, D]
-        special_token_mask = torch.zeros(b, num_special_tokens, dtype=torch.bool, device=padded_feature.device)
+        null_token_feature = self.null_token.weight.expand(
+            b, 1, d)  # [1, D], this is optional
+        special_token_feature = torch.cat(
+            (graph_token_feature, null_token_feature), dim=1)  # [B, 2, D]
+        special_token_mask = torch.zeros(
+            b, num_special_tokens, dtype=torch.bool, device=padded_feature.device)
 
-        padded_feature = torch.cat((special_token_feature, padded_feature), dim=1)  # [B, 2 + T, D]
-        padding_mask = torch.cat((special_token_mask, padding_mask), dim=1)  # [B, 2 + T]
+        padded_feature = torch.cat(
+            (special_token_feature, padded_feature), dim=1)  # [B, 2 + T, D]
+        padding_mask = torch.cat(
+            (special_token_mask, padding_mask), dim=1)  # [B, 2 + T]
         return padded_feature, padding_mask
 
     def forward(self, batched_data, perturb=None):
@@ -214,7 +243,10 @@ class GraphFeatureTokenizer(nn.Module):
             node_data,
             z_data,
             node_num,
-            lap_eigvec,
+            # lap_eigval,
+            # lap_eigvec,
+            in_degree,
+            node_dist,
             edge_index,
             edge_data,
             edge_num
@@ -222,16 +254,26 @@ class GraphFeatureTokenizer(nn.Module):
             batched_data.node_data,
             batched_data.z_data,
             batched_data.node_num,
-            batched_data.lap_eigvec,
+            # batched_data.lap_eigval,
+            # batched_data.lap_eigvec,
+            batched_data.in_degree,
+            batched_data.node_dist,
             batched_data.edge_index,
             batched_data.edge_data,
             batched_data.edge_num
         )
+        z_feature = self.z_encoder(z_data)  # [sum(n_node), D]
+        node_dist_feature = self.node_dist_encoder(node_dist).sum(-2)
+        in_degree_feature = self.in_degree_encoder(in_degree)
 
-        node_feature = self.node_encoder(node_data).sum(-2)  # [sum(n_node), D]
+        if self.use_node_features:
+            node_feature = z_feature + in_degree_feature + \
+                node_dist_feature + self.act(self.node_encoder(node_data))
+        else:
+            node_feature = z_feature + in_degree_feature + node_dist_feature
         edge_feature = self.edge_encoder(edge_data).sum(-2)  # [sum(n_edge), D]
-        z_feature = self.z_encoder(z_data).sum(-2) # [sum(n_node), D]
-        node_feature += z_feature
+        # node_feature[node_feature!=0] = 0
+        # edge_feature[edge_feature!=0] = 0
 
         device = node_feature.device
         dtype = node_feature.dtype
@@ -239,13 +281,17 @@ class GraphFeatureTokenizer(nn.Module):
         padded_index, padded_feature, padding_mask, _, _ = self.get_batch(
             node_feature, edge_index, edge_feature, node_num, edge_num, perturb
         )
-        node_mask = self.get_node_mask(node_num, node_feature.device)  # [B, max(n_node)]
+        node_mask = self.get_node_mask(
+            node_num, node_feature.device)  # [B, max(n_node)]
 
         if self.rand_node_id:
-            rand_node_id = torch.rand(sum(node_num), self.rand_node_id_dim, device=device, dtype=dtype)  # [sum(n_node), D]
+            rand_node_id = torch.rand(sum(
+                node_num), self.rand_node_id_dim, device=device, dtype=dtype)  # [sum(n_node), D]
             rand_node_id = F.normalize(rand_node_id, p=2, dim=1)
-            rand_index_embed = self.get_index_embed(rand_node_id, node_mask, padded_index)  # [B, T, 2D]
-            padded_feature = padded_feature + self.rand_encoder(rand_index_embed)
+            rand_index_embed = self.get_index_embed(
+                rand_node_id, node_mask, padded_index)  # [B, T, 2D]
+            padded_feature = padded_feature + \
+                self.rand_encoder(rand_index_embed)
 
         if self.orf_node_id:
             b, max_n = len(node_num), max(node_num)
@@ -254,29 +300,42 @@ class GraphFeatureTokenizer(nn.Module):
             )  # [b, max(n_node), max(n_node)]
             orf_node_id = orf[node_mask]  # [sum(n_node), max(n_node)]
             if self.orf_node_id_dim > max_n:
-                orf_node_id = F.pad(orf_node_id, (0, self.orf_node_id_dim - max_n), value=float('0'))  # [sum(n_node), Do]
+                # [sum(n_node), Do]
+                orf_node_id = F.pad(
+                    orf_node_id, (0, self.orf_node_id_dim - max_n), value=float('0'))
             else:
-                orf_node_id = orf_node_id[..., :self.orf_node_id_dim]  # [sum(n_node), Do]
+                # [sum(n_node), Do]
+                orf_node_id = orf_node_id[..., :self.orf_node_id_dim]
             orf_node_id = F.normalize(orf_node_id, p=2, dim=1)
-            orf_index_embed = self.get_index_embed(orf_node_id, node_mask, padded_index)  # [B, T, 2Do]
+            orf_index_embed = self.get_index_embed(
+                orf_node_id, node_mask, padded_index)  # [B, T, 2Do]
             padded_feature = padded_feature + self.orf_encoder(orf_index_embed)
 
         if self.lap_node_id:
             lap_dim = lap_eigvec.size(-1)
             if self.lap_node_id_k > lap_dim:
-                eigvec = F.pad(lap_eigvec, (0, self.lap_node_id_k - lap_dim), value=float('0'))  # [sum(n_node), Dl]
+                # [sum(n_node), Dl]
+                eigvec = F.pad(
+                    lap_eigvec, (0, self.lap_node_id_k - lap_dim), value=float('0'))
             else:
-                eigvec = lap_eigvec[:, :self.lap_node_id_k]  # [sum(n_node), Dl]
+                # [sum(n_node), Dl]
+                eigvec = lap_eigvec[:, :self.lap_node_id_k]
             if self.lap_eig_dropout is not None:
-                eigvec = self.lap_eig_dropout(eigvec[..., None, None]).view(eigvec.size())
-            lap_node_id = self.handle_eigvec(eigvec, node_mask, self.lap_node_id_sign_flip)
-            lap_index_embed = self.get_index_embed(lap_node_id, node_mask, padded_index)  # [B, T, 2Dl]
+                eigvec = self.lap_eig_dropout(
+                    eigvec[..., None, None]).view(eigvec.size())
+            lap_node_id = self.handle_eigvec(
+                eigvec, node_mask, self.lap_node_id_sign_flip)
+            lap_index_embed = self.get_index_embed(
+                lap_node_id, node_mask, padded_index)  # [B, T, 2Dl]
             padded_feature = padded_feature + self.lap_encoder(lap_index_embed)
 
         if self.type_id:
             padded_feature = padded_feature + self.get_type_embed(padded_index)
 
-        padded_feature, padding_mask = self.add_special_tokens(padded_feature, padding_mask)  # [B, 2+T, D], [B, 2+T]
+        padded_feature, padding_mask = self.add_special_tokens(
+            padded_feature, padding_mask)  # [B, 2+T, D], [B, 2+T]
 
-        padded_feature = padded_feature.masked_fill(padding_mask[..., None], float('0'))
-        return padded_feature, padding_mask, padded_index  # [B, 2+T, D], [B, 2+T], [B, T, 2]
+        padded_feature = padded_feature.masked_fill(
+            padding_mask[..., None], float('0'))
+        # [B, 2+T, D], [B, 2+T], [B, T, 2]
+        return padded_feature, padding_mask, padded_index

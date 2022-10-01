@@ -50,7 +50,7 @@ class TokenGTGraphEncoder(nn.Module):
             lap_node_id_k: int = 8,
             lap_node_id_sign_flip: bool = False,
             lap_node_id_eig_dropout: float = 0.0,
-            type_id: bool = False,
+            type_id: bool = True,
 
             stochastic_depth: bool = False,
 
@@ -114,17 +114,17 @@ class TokenGTGraphEncoder(nn.Module):
         self.performer_finetune = performer_finetune
         self.embed_scale = embed_scale
 
-        
         self.quant_noise = None
 
         if encoder_normalize_before:
-            self.emb_layer_norm = nn.LayerNorm(self.embedding_dim, export=export)
+            self.emb_layer_norm = nn.LayerNorm(
+                self.embedding_dim, export=export)
         else:
             self.emb_layer_norm = None
 
         if layernorm_style == "prenorm":
-            self.final_layer_norm = nn.LayerNorm(self.embedding_dim, export=export)
-
+            self.final_layer_norm = nn.LayerNorm(
+                self.embedding_dim, export=export)
 
         self.layers = nn.ModuleList([])
 
@@ -157,7 +157,8 @@ class TokenGTGraphEncoder(nn.Module):
                     dropout=self.dropout_module.p,
                     attention_dropout=attention_dropout,
                     activation_dropout=activation_dropout,
-                    drop_path=(0.1 * (layer_idx + 1) / num_encoder_layers) if stochastic_depth else 0,
+                    drop_path=(0.1 * (layer_idx + 1) /
+                               num_encoder_layers) if stochastic_depth else 0,
                     performer=performer,
                     performer_nb_features=performer_nb_features,
                     performer_generalized_attention=performer_generalized_attention,
@@ -182,7 +183,8 @@ class TokenGTGraphEncoder(nn.Module):
                     p.requires_grad = False
 
         if freeze_embeddings:
-            raise NotImplementedError("Freezing embeddings is not implemented yet.")
+            raise NotImplementedError(
+                "Freezing embeddings is not implemented yet.")
 
         for layer in range(n_trans_layers_to_freeze):
             freeze_module_params(self.layers[layer])
@@ -190,7 +192,8 @@ class TokenGTGraphEncoder(nn.Module):
         if performer:
             # keeping track of when to redraw projections for all attention layers
             self.performer_auto_check_redraw = performer_auto_check_redraw
-            self.performer_proj_updater = ProjectionUpdater(self.layers, performer_feature_redraw_interval)
+            self.performer_proj_updater = ProjectionUpdater(
+                self.layers, performer_feature_redraw_interval)
 
     def performer_fix_projection_matrices_(self):
         self.performer_proj_updater.feature_redraw_interval = None
@@ -205,11 +208,13 @@ class TokenGTGraphEncoder(nn.Module):
         ) = self.cached_performer_options
 
         for layer in self.layers:
-            layer.performer_finetune_setup(performer_nb_features, performer_generalized_attention)
+            layer.performer_finetune_setup(
+                performer_nb_features, performer_generalized_attention)
 
         self.performer = True
         self.performer_auto_check_redraw = performer_auto_check_redraw
-        self.performer_proj_updater = ProjectionUpdater(self.layers, performer_feature_redraw_interval)
+        self.performer_proj_updater = ProjectionUpdater(
+            self.layers, performer_feature_redraw_interval)
 
     def build_tokengt_graph_encoder_layer(
             self,
@@ -267,7 +272,8 @@ class TokenGTGraphEncoder(nn.Module):
         if token_embeddings is not None:
             raise NotImplementedError
         else:
-            x, padding_mask, padded_index = self.graph_feature(batched_data, perturb)
+            x, padding_mask, padded_index = self.graph_feature(
+                batched_data, perturb)
 
         # x: B x T x C
 
@@ -299,12 +305,14 @@ class TokenGTGraphEncoder(nn.Module):
         attn_dict = {'maps': {}, 'padded_index': padded_index}
         for i in range(len(self.layers)):
             layer = self.layers[i]
-            x, attn = layer(x, self_attn_padding_mask=padding_mask, self_attn_mask=attn_mask, self_attn_bias=None)
+            x, attn = layer(x, self_attn_padding_mask=padding_mask,
+                            self_attn_mask=attn_mask, self_attn_bias=None)
             if not last_state_only:
                 inner_states.append(x)
             attn_dict['maps'][i] = attn
 
-        graph_rep = x[0, :, :]  # 1 x B x C => Thought: 1st token output only needed
+        # 1 x B x C => Thought: 1st token output only needed
+        graph_rep = x[0, :, :]
 
         if last_state_only:
             inner_states = [x]

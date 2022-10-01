@@ -13,6 +13,8 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch.nn import BCEWithLogitsLoss
 
+#from lr import PolynomialDecayLR
+
 from modules import init_graphormer_params, TokenGTGraphEncoder
 
 logger = logging.getLogger(__name__)
@@ -36,21 +38,21 @@ class TokenGTModel(nn.Module):
 
     def forward(self, batched_data, **kwargs):
         out, attn  = self.encoder(batched_data, **kwargs)
-        return F.softmax(self.linear(out), dim=1)
+        return self.linear(out)
 
 
 class TokenGTEncoder(nn.Module):
     def __init__(self, 
         num_node_features = 1,
-        num_edge_features = 1,
+        num_edge_features = 2,
         num_classes = 2, 
         share_encoder_input_output_embed = False,
-        encoder_embed_dim = 768,
+        encoder_embed_dim = 1024,
         prenorm=False,
         postnorm=True,
         max_nodes = 128,
-        encoder_layers = 16,
-        encoder_attention_heads = 32,
+        encoder_layers = 1,
+        encoder_attention_heads = 1,
         return_attention = True):
         super().__init__()
         assert not (prenorm and postnorm)
@@ -136,32 +138,4 @@ class TokenGTEncoder(nn.Module):
         return self.max_nodes
 
 
-if __name__ == '__main__':
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = TokenGTModel(embedding_dim=768, num_classes = 2, return_attention=True)
-    model.to(device)
-    batched_data = {}
-    # batched_data["node_data"] =  torch.tensor([[101], [102],[201], [202], [203]], dtype=torch.float)
-    # batched_data["node_num"] = [2,3]
-    # batched_data["lap_eigvec"] = None
-    # batched_data["edge_index"] = torch.tensor([[0,0,1], [1,1,2]])
-    # batched_data["edge_data"] = torch.tensor([[1],[1], [1]], dtype=torch.float)
-    # batched_data["edge_num"] = [1,2]
-    # out = model(batched_data)
-    data1 = CustomData(node_data=torch.Tensor([[101],[102]]).to(device),z_data=torch.Tensor([1,1]).to(torch.long).to(device), node_num=torch.Tensor([2]).to(torch.long).to(device), edge_index=torch.Tensor([[0], [1]]).to(torch.long).to(device), edge_data=torch.Tensor([[1]]).to(device), edge_num=torch.Tensor([1]).to(torch.long).to(device), y=torch.Tensor([0]).to(torch.long).to(device), lap_eigvec=torch.Tensor([0.1]).to(device))
-    data2 = CustomData(node_data=torch.Tensor([[201],[202], [203]]).to(device), z_data=torch.Tensor([1,1,2]).to(torch.long).to(device), node_num=torch.Tensor([3]).to(torch.long).to(device), edge_index=torch.Tensor([[0,1], [1,2]]).to(torch.long).to(device), edge_data=torch.Tensor([[1],[2]]).to(device), edge_num=torch.Tensor([2]).to(torch.long).to(device), y=torch.Tensor([1]).to(torch.long).to(device), lap_eigvec=torch.Tensor([0.1]).to(device))
-    dataset = [data1, data2]
-    list_data = []
-    # for _ in range(10000):
-    #     list_data += dataset
-    loader = DataLoader(dataset, batch_size=2) 
-    
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.001)
-    pbar = tqdm(loader, ncols=70)
-    for data in pbar:
-        optimizer.zero_grad()
-        out = model(data)
-        loss = BCEWithLogitsLoss()(out[:,1].view(-1), data.y.to(torch.float))
-        loss.backward()
-        optimizer.step()
     
