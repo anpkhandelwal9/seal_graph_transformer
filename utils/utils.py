@@ -143,13 +143,13 @@ def graph_tokenizer(adj, edge_index, src, dst, max_token_len=512):
     dist2dst = shortest_path(adj_wo_src, directed=False, unweighted=True, indices=dst-1)
     dist2dst = np.insert(dist2dst, src, 0, axis=0)
 
-    dist_data = [[1000 if np.isinf(dist2src[i]) else dist2src[i],
-                  1000 if np.isinf(dist2dst[i]) else dist2dst[i],]
-                  for i in range(dist2src.shape[1])]
+    dist_data = [[999 if np.isinf(dist2src[i]) else dist2src[i],
+                  999 if np.isinf(dist2dst[i]) else dist2dst[i],]
+                  for i in range(dist2src.shape[0])]
 
     dist2src = torch.from_numpy(dist2src)
     dist2dst = torch.from_numpy(dist2dst)
-    edge_data = torch.Tensor(edge_data)#.t()
+    dist_data = torch.Tensor(dist_data)#.t()
 
     dist = dist2src + dist2dst
     dist_over_2, dist_mod_2 = dist // 2, dist % 2
@@ -245,7 +245,7 @@ def de_plus_node_labeling(adj, src, dst, max_dist=100):
     return dist.to(torch.long)
 
 
-def construct_pyg_graph(node_ids, adj, dists, node_features, y, node_label='drnl'):
+def construct_pyg_graph(node_ids, adj, dists, node_features, y, degrees, node_label='drnl'):
     # Construct a pytorch_geometric graph from a scipy csr adjacency matrix.
     u, v, r = ssp.find(adj)
     num_nodes = adj.shape[0]
@@ -276,9 +276,9 @@ def construct_pyg_graph(node_ids, adj, dists, node_features, y, node_label='drnl
         degree = torch.tensor(adj.sum(axis=0)).squeeze(0)
         degree[degree>100] = 100  # limit the maximum label to 100
         #= edge_data.to(torch.float)
-        data = CustomData(node_data=node_features.to(torch.float), edge_index=edge_index, dist=dist.to(torch.float), y=y, z_data=z, 
+        data = CustomData(node_data=node_features.to(torch.float), edge_index=edge_index, edge_data=edge_weight.to(torch.long),dist=dist.to(torch.long), y=y, z_data=z, 
                 edge_num=torch.tensor([edge_index.shape[1]]).to(torch.long), node_num=torch.tensor([num_nodes]).to(torch.long),
-                lap_eigvec=torch.tensor([[1]]).to(torch.long), degree=degree)
+                lap_eigvec=torch.tensor([[1]]).to(torch.long), degree=degrees)
         return data
     else:
         z = torch.zeros(len(dists), dtype=torch.long)
