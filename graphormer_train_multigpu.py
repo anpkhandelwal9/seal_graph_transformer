@@ -49,13 +49,13 @@ def setup(rank, world_size):
 
 
 def cleanup():
+    dist.barrier()
     dist.destroy_process_group()
 
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
 warnings.simplefilter('ignore', SparseEfficiencyWarning)
-
 
 
 class SEALDataset(InMemoryDataset):
@@ -176,8 +176,8 @@ class SEALDynamicDataset(Dataset):
         tmp = k_hop_subgraph(src, dst, self.num_hops, self.A, self.ratio_per_hop,
                              self.max_nodes_per_hop, node_features=self.data.x,
                              y=y, directed=self.directed, A_csc=self.A_csc)
-        degrees = torch.clamp(self.degrees[tmp[0]], max=99)
-        degrees[degrees>100] = 100
+        degrees = self.degrees[tmp[0]]
+        degrees[degrees > 100] = 100
         if y == 1 and (self.split == 'train'):
             degrees[0] -= 1
             degrees[1] -= 1
@@ -224,7 +224,7 @@ def test(model, val_loader, val_dataset, test_loader, test_dataset, rank, eval_m
     y_pred, y_true = [], []
     for data in tqdm(val_loader, ncols=70):
         data = data.to(rank)
-        logits = model(data)
+        logits = model.module(data)
         loss = BCEWithLogitsLoss()(logits.view(-1), data.y.to(torch.float))
         total_loss += loss.item() * data.num_graphs
         # indices = torch.Tensor([i for i in range(0, logits.logits.view(-1).shape[0]) if i%2 == 1]).to(torch.long)
@@ -239,7 +239,7 @@ def test(model, val_loader, val_dataset, test_loader, test_dataset, rank, eval_m
     y_pred, y_true = [], []
     for data in tqdm(test_loader, ncols=70):
         data = data.to(rank)
-        logits = model(data)
+        logits = model.module(data)
         loss = BCEWithLogitsLoss()(logits.view(-1), data.y.to(torch.float))
         total_loss += loss.item() * data.num_graphs
         y_pred.append(logits.view(-1).cpu())
@@ -876,15 +876,15 @@ if __name__ == '__main__':
                         help="test multiple models together")
     parser.add_argument('--use_heuristic', type=str, default=None,
                         help="test a link prediction heuristic (CN or AA)")
-    
+
     parser.add_argument('--z_embedding', action='store_true')
     parser.add_argument('--dist_embedding', action='store_true')
     parser.add_argument('--degree_embedding', action='store_true')
     parser.add_argument('--early_stop_epochs', type=int, default=10)
     args = parser.parse_args()
-    
 
-    args.positional_embedding = {'z':args.z_embedding, 'dist':args.dist_embedding, 'degree':args.degree_embedding}
+    args.positional_embedding = {
+        'z': args.z_embedding, 'dist': args.dist_embedding, 'degree': args.degree_embedding}
     # args.use_valedges_as_input = True
     args.use_feature = True
     args.dynamic_train = True
