@@ -45,7 +45,7 @@ def setup(rank, world_size):
     os.environ['MASTER_PORT'] = '12355'
     # initialize the process group
     torch.cuda.set_device(rank)
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
 
 
 def cleanup():
@@ -56,14 +56,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 warnings.simplefilter('ignore', SparseEfficiencyWarning)
 
-
-def seed_everything(seed=time.time()):
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
 
 class SEALDataset(InMemoryDataset):
@@ -185,6 +177,7 @@ class SEALDynamicDataset(Dataset):
                              self.max_nodes_per_hop, node_features=self.data.x,
                              y=y, directed=self.directed, A_csc=self.A_csc)
         degrees = torch.clamp(self.degrees[tmp[0]], max=99)
+        degrees[degrees>100] = 100
         if y == 1 and (self.split == 'train'):
             degrees[0] -= 1
             degrees[1] -= 1
@@ -236,7 +229,7 @@ def test(model, val_loader, val_dataset, test_loader, test_dataset, rank, eval_m
         total_loss += loss.item() * data.num_graphs
         # indices = torch.Tensor([i for i in range(0, logits.logits.view(-1).shape[0]) if i%2 == 1]).to(torch.long)
         y_pred.append(logits.view(-1).cpu())
-        y_true.append(data['y'].view(-1).cpu().to(torch.float))
+        y_true.append(data.y.view(-1).cpu().to(torch.float))
     val_pred, val_true = torch.cat(y_pred), torch.cat(y_true)
     pos_val_pred = val_pred[val_true == 1]
     neg_val_pred = val_pred[val_true == 0]
@@ -434,7 +427,7 @@ def define_logging(args):
     return log_file
 
 
-def run(rank, world_size, args, run_no, log_file):
+def run(rank, world_size, args, log_file):
     args = cp.deepcopy(args)
     log_file = cp.deepcopy(log_file)
     setup(rank, world_size)
@@ -751,10 +744,18 @@ def run(rank, world_size, args, run_no, log_file):
         # Training starts
         for epoch in range(start_epoch, start_epoch + args.epochs):
             train_sampler.set_epoch(epoch)
-            loss = world_size * \
-                train(train_dataset, train_loader, model, optimizer, rank)
+            loss = train(train_dataset, train_loader, model, optimizer, rank)
+            # send loss to master process from other processes
+            if (rank != 0):
+                dist.send(torch.tensor(loss, dtype=torch.float), 0)
 
             if epoch % args.eval_steps == 0 and rank == 0:
+                # Collect loss from other processes, refer to https://pytorch.org/docs/stable/distributed.html#point-to-point-communication
+                for other_rank in range(world_size):
+                    if (other_rank != 0):
+                        other_loss = torch.tensor(0.0, dtype=torch.float)
+                        dist.recv(other_loss, other_rank)
+                        loss += other_loss
                 results, loss_results = test(model, val_loader, val_dataset,
                                              test_loader, test_dataset, rank, args.eval_metric, evaluator)
                 val_loss = loss_results['val_loss']
@@ -780,27 +781,42 @@ def run(rank, world_size, args, run_no, log_file):
                         with open(log_file, 'a') as f:
                             print(key, file=f)
                             print(to_print, file=f)
-
+                # Send early stop flag to all ranks
+                if val_loss < previous_loss:
+                    previous_loss = val_loss
+                    same_count = 0
+                else:
+                    same_count += 1
+                for other_rank in range(world_size):
+                    if (other_rank != 0):
+                        dist.send(torch.tensor(
+                            same_count, dtype=torch.long), other_rank)
+            # Wait for all processes , needed to decide whether to break for every rank
+            if (rank != 0):
+                same_count = torch.tensor(0, dtype=torch.long)
+                dist.recv(same_count)
+            if (same_count == args.early_stop_epochs):
+                break
+        if rank == 0:
+            for key in loggers.keys():
+                print(key)
+                loggers[key].print_statistics(run)
+                with open(log_file, 'a') as f:
+                    print(key, file=f)
+                    loggers[key].print_statistics(run, f=f)
+    if rank == 0:
         for key in loggers.keys():
             print(key)
-            loggers[key].print_statistics(run)
+            loggers[key].print_statistics()
             with open(log_file, 'a') as f:
                 print(key, file=f)
-                loggers[key].print_statistics(run, f=f)
-
-    for key in loggers.keys():
-        print(key)
-        loggers[key].print_statistics()
-        with open(log_file, 'a') as f:
-            print(key, file=f)
-            loggers[key].print_statistics(f=f)
-    print(f'Total number of parameters is {total_params}')
-    print(f'Results are saved in {args.res_dir}')
+                loggers[key].print_statistics(f=f)
+        print(f'Total number of parameters is {total_params}')
+        print(f'Results are saved in {args.res_dir}')
     cleanup()
 
 
 if __name__ == '__main__':
-    mp.set_start_method("fork")
     # Data settings
     parser = argparse.ArgumentParser(description='OGBL (SEAL)')
     parser.add_argument('--dataset', type=str, default='pubmed')
@@ -836,7 +852,7 @@ if __name__ == '__main__':
                         help="dynamically extract enclosing subgraphs on the fly")
     parser.add_argument('--dynamic_val', action='store_true')
     parser.add_argument('--dynamic_test', action='store_true')
-    parser.add_argument('--num_workers', type=int, default=0,
+    parser.add_argument('--num_workers', type=int, default=8,
                         help="number of workers for dynamic mode; 0 if not dynamic")
     parser.add_argument('--train_node_embedding', action='store_true',
                         help="also train free-parameter node embeddings together with GNN")
@@ -864,6 +880,7 @@ if __name__ == '__main__':
     parser.add_argument('--z_embedding', action='store_true')
     parser.add_argument('--dist_embedding', action='store_true')
     parser.add_argument('--degree_embedding', action='store_true')
+    parser.add_argument('--early_stop_epochs', type=int, default=10)
     args = parser.parse_args()
     
 
@@ -899,7 +916,6 @@ if __name__ == '__main__':
                                 args.encoder_layers = encoder_layers[m]
                                 args.num_attention_heads = num_attention_heads[n]
                                 logging_file = define_logging(args)
-                                params = (world_size, args,
-                                          run_no, logging_file)
+                                params = (world_size, args, logging_file)
                                 mp.spawn(run, args=params,
                                          nprocs=world_size, join=True)
