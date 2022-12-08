@@ -1,0 +1,1 @@
+for %%x in (1.1 1.2 2.4 3.9) do echo V%%x.txt
